@@ -1,0 +1,35 @@
+{
+  "app_name": "Smart Classroom Management System",
+  "app_type": "hybrid_fullstack",
+  "archetype": "ORGANIC & EARTHY / ACADEMIC BLUE-GREEN",
+  "theme": "light",
+  "typography": {
+    "heading_font": "Plus Jakarta Sans, sans-serif",
+    "body_font": "Inter, sans-serif",
+    "mono_font": "JetBrains Mono, monospace",
+    "rules": "Use tight letter spacing for headings (tracking-tight), uppercase small tracking for overlines. H1: text-4xl sm:text-5xl lg:text-6xl max, H2: text-2xl sm:text-3xl lg:text-4xl, Body: text-base."
+  },
+  "colors": {
+    "primary": "#0D9488",
+    "primary_hover": "#0F766E",
+    "secondary": "#0284C7",
+    "accent": "#10B981",
+    "background": "#F8FAFC",
+    "surface": "#FFFFFF",
+    "border": "#E2E8F0",
+    "text_main": "#0F172A",
+    "text_muted": "#64748B",
+    "forbidden_colors": ["#7351B7", "#1B93A4"]
+  },
+  "component_path": "/app/frontend/src/components",
+  "instructions_to_main_agent": "Build a robust Smart Classroom Management System with JWT authentication (Admin/Teacher and Student demo roles), Dashboard metrics, Student Management (CRUD + search), Attendance Management (date-wise Present/Absent & percentage), Timetable, Announcements, Assignment Management, Student Self-Dashboard, Notifications, and Reports. Use Tailwind CSS with clean academic teal/blue styling, Shadcn UI primitives (.js format), and Sonner for toasts. Ensure all interactive elements have data-testid attributes.",
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "Never use universal transition (e.g. transition: all).",
+    "Never center app container text (.App { text-align: center; }).",
+    "Ensure glassmorphism has solid fallback and no fully transparent headers/dropdowns.",
+    "All interactive elements must include data-testid attributes in kebab-case.",
+    "Use sonner for toast notifications."
+  ],
+  "image_urls": []
+}
+
