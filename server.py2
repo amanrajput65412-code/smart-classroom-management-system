@@ -1,0 +1,4 @@
+    require_staff(user); doc = data.model_dump(); doc['id'] = 'stu-' + uuid.uuid4().hex[:6]; await db.students.insert_one(doc); return clean(doc)
+    require_staff(user); doc = data.model_dump(); doc['id'] = str(uuid.uuid4()); await db.timetable.insert_one(doc); return clean(doc)
+    require_staff(user); doc = data.model_dump(); doc.update(id='as-' + uuid.uuid4().hex[:6], status='Not started'); await db.assignments.insert_one(doc); return clean(doc)
+    require_staff(user); doc = data.model_dump(); doc.update(id='an-' + uuid.uuid4().hex[:6], author=user['name'], created_at=datetime.now(timezone.utc).isoformat()); await db.announcements.insert_one(doc); return clean(doc)
