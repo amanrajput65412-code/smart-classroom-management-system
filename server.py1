@@ -1,0 +1,199 @@
+from dotenv import load_dotenv
+load_dotenv()
+
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, Field, EmailStr
+from typing import Optional, Any
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+import os, bcrypt, jwt, uuid, logging
+
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / '.env')
+client = AsyncIOMotorClient(os.environ['MONGO_URL'])
+db = client[os.environ['DB_NAME']]
+app = FastAPI(title='Smart Classroom API')
+api = APIRouter(prefix='/api')
+logger = logging.getLogger(__name__)
+JWT_ALGORITHM = 'HS256'
+
+class LoginInput(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6)
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6)
+    name: str = Field(min_length=2)
+    role: str = 'student'
+
+class StudentInput(BaseModel):
+    name: str = Field(min_length=2)
+    email: EmailStr
+    roll_number: str
+    class_name: str = 'CS-A'
+    phone: str = ''
+
+class AttendanceInput(BaseModel):
+    student_id: str
+    date: str
+    status: str
+
+class AssignmentInput(BaseModel):
+    title: str
+    subject: str
+    deadline: str
+    description: str = ''
+
+class AnnouncementInput(BaseModel):
+    title: str
+    body: str
+    audience: str = 'All students'
+
+class TimetableInput(BaseModel):
+    day: str
+    time: str
+    subject: str
+    teacher: str
+    room: str
+
+def clean(doc: Optional[dict]) -> Optional[dict]:
+    if not doc: return None
+    result = {k: v for k, v in doc.items() if k != '_id' and k != 'password_hash'}
+    for k, v in result.items():
+        if hasattr(v, 'isoformat'): result[k] = v.isoformat()
+    return result
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+def verify_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode(), hashed.encode())
+
+def token_for(user_id: str, email: str, token_type='access') -> str:
+    duration = timedelta(minutes=30) if token_type == 'access' else timedelta(days=7)
+    return jwt.encode({'sub': user_id, 'email': email, 'type': token_type,
+                       'exp': datetime.now(timezone.utc) + duration},
+                      os.environ['JWT_SECRET'], algorithm=JWT_ALGORITHM)
+
+async def current_user(request: Request) -> dict:
+    token = request.cookies.get('access_token')
+    if not token:
+        auth = request.headers.get('Authorization', '')
+        token = auth[7:] if auth.startswith('Bearer ') else None
+    if not token: raise HTTPException(401, 'Not authenticated')
+    try:
+        payload = jwt.decode(token, os.environ['JWT_SECRET'], algorithms=[JWT_ALGORITHM])
+        if payload.get('type') != 'access': raise HTTPException(401, 'Invalid token')
+        from bson import ObjectId
+        user = await db.users.find_one({'_id': ObjectId(payload['sub'])})
+        if not user: raise HTTPException(401, 'User not found')
+        return clean(user)
+    except (jwt.InvalidTokenError, ValueError): raise HTTPException(401, 'Invalid or expired session')
+
+def require_staff(user: dict):
+    if user.get('role') not in ['admin', 'teacher']: raise HTTPException(403, 'Staff access required')
+
+async def seed_data():
+    await db.users.create_index('email', unique=True)
+    admin_email = os.environ['ADMIN_EMAIL']; admin_password = os.environ['ADMIN_PASSWORD']
+    existing = await db.users.find_one({'email': admin_email})
+    if not existing:
+        await db.users.insert_one({'email': admin_email, 'password_hash': hash_password(admin_password), 'name': 'Aarav Mehta', 'role': 'admin'})
+    student_user = await db.users.find_one({'email': 'student@campus.edu'})
+    if not student_user:
+        await db.users.insert_one({'email': 'student@campus.edu', 'password_hash': hash_password('student123'), 'name': 'Maya Patel', 'role': 'student'})
+    if await db.students.count_documents({}) == 0:
+        students = [
+            {'id': 'stu-001', 'name': 'Maya Patel', 'email': 'student@campus.edu', 'roll_number': 'CS-2401', 'class_name': 'CS-A', 'phone': '+91 98765 43210'},
+            {'id': 'stu-002', 'name': 'Rohan Shah', 'email': 'rohan@campus.edu', 'roll_number': 'CS-2402', 'class_name': 'CS-A', 'phone': '+91 98765 43211'},
+            {'id': 'stu-003', 'name': 'Isha Nair', 'email': 'isha@campus.edu', 'roll_number': 'CS-2403', 'class_name': 'CS-A', 'phone': '+91 98765 43212'},
+            {'id': 'stu-004', 'name': 'Kabir Singh', 'email': 'kabir@campus.edu', 'roll_number': 'CS-2404', 'class_name': 'CS-A', 'phone': '+91 98765 43213'}]
+        await db.students.insert_many(students)
+    if await db.timetable.count_documents({}) == 0:
+        await db.timetable.insert_many([{'id': str(uuid.uuid4()), 'day': d, 'time': t, 'subject': s, 'teacher': 'Aarav Mehta', 'room': r} for d,t,s,r in [('Monday','09:00 AM','Data Structures','Room 204'),('Monday','11:00 AM','Web Engineering','Lab 2'),('Tuesday','10:00 AM','Database Systems','Room 204'),('Wednesday','09:00 AM','Computer Networks','Room 301'),('Thursday','11:00 AM','Web Engineering','Lab 2'),('Friday','10:00 AM','Project Studio','Room 204')]])
+    if await db.assignments.count_documents({}) == 0:
+        await db.assignments.insert_many([{'id': 'as-001', 'title': 'API Design Brief', 'subject': 'Web Engineering', 'deadline': '2025-06-18', 'description': 'Design a REST API for a campus service.', 'status': 'In progress'}, {'id': 'as-002', 'title': 'SQL Query Set', 'subject': 'Database Systems', 'deadline': '2025-06-20', 'description': 'Complete the query worksheet and submit a PDF.', 'status': 'Not started'}])
+    if await db.announcements.count_documents({}) == 0:
+        await db.announcements.insert_many([{'id': 'an-001', 'title': 'Mid-semester review next week', 'body': 'Please bring your project outline to Friday\'s studio session.', 'audience': 'All students', 'created_at': datetime.now(timezone.utc).isoformat(), 'author': 'Aarav Mehta'}, {'id': 'an-002', 'title': 'Lab 2 maintenance', 'body': 'Lab 2 will be unavailable after 4 PM on Thursday.', 'audience': 'CS-A', 'created_at': datetime.now(timezone.utc).isoformat(), 'author': 'Aarav Mehta'}])
+
+@app.on_event('startup')
+async def startup(): await seed_data()
+
+@api.post('/auth/login')
+async def login(data: LoginInput, response: Response):
+    user = await db.users.find_one({'email': data.email.lower()})
+    if not user or not verify_password(data.password, user['password_hash']): raise HTTPException(401, 'Incorrect email or password')
+    response.set_cookie('access_token', token_for(str(user['_id']), user['email']), httponly=True, samesite='lax', max_age=1800)
+    response.set_cookie('refresh_token', token_for(str(user['_id']), user['email'], 'refresh'), httponly=True, samesite='lax', max_age=604800)
+    return clean(user)
+
+@api.post('/auth/logout')
+async def logout(response: Response): response.delete_cookie('access_token'); response.delete_cookie('refresh_token'); return {'ok': True}
+
+@api.get('/auth/me')
+async def me(user=Depends(current_user)): return user
+
+@api.get('/dashboard')
+async def dashboard(user=Depends(current_user)):
+    students = await db.students.count_documents({}); assignments = await db.assignments.find({}, {'_id': 0}).to_list(20); announcements = await db.announcements.find({}, {'_id': 0}).sort('created_at', -1).to_list(5)
+    attendance = await db.attendance.find({}, {'_id': 0}).to_list(1000)
+    present = len([a for a in attendance if a.get('status') == 'Present'])
+    return {'students': students, 'classes': await db.timetable.count_documents({}), 'announcements': await db.announcements.count_documents({}), 'attendance': round(present / len(attendance) * 100) if attendance else 92, 'assignments': assignments, 'announcements_list': announcements, 'user': user}
+
+async def list_collection(name: str): return [clean(x) for x in await db[name].find({}, {'_id': 0}).sort('created_at', -1).to_list(1000)]
+
+@api.get('/students')
+async def students(q: str = '', user=Depends(current_user)):
+    docs = await db.students.find({}, {'_id': 0}).to_list(1000); return [x for x in docs if not q or q.lower() in (x['name'] + x['email'] + x['roll_number']).lower()]
+
+@api.post('/students')
+async def create_student(data: StudentInput, user=Depends(current_user)):
+    require_staff(user); doc = data.model_dump(); doc['id'] = 'stu-' + uuid.uuid4().hex[:6]; await db.students.insert_one(doc); return doc
+
+@api.delete('/students/{student_id}')
+async def delete_student(student_id: str, user=Depends(current_user)):
+    require_staff(user); await db.students.delete_one({'id': student_id}); return {'ok': True}
+
+@api.get('/attendance')
+async def attendance(user=Depends(current_user)):
+    rows = await db.attendance.find({}, {'_id': 0}).to_list(1000); students = await db.students.find({}, {'_id': 0}).to_list(1000)
+    by_id = {s['id']: s for s in students}; return [{**r, 'student_name': by_id.get(r['student_id'], {}).get('name', 'Unknown')} for r in rows]
+
+@api.post('/attendance')
+async def mark_attendance(data: AttendanceInput, user=Depends(current_user)):
+    require_staff(user); doc = data.model_dump(); await db.attendance.update_one({'student_id': doc['student_id'], 'date': doc['date']}, {'$set': doc}, upsert=True); return doc
+
+@api.get('/timetable')
+async def timetable(user=Depends(current_user)): return await list_collection('timetable')
+
+@api.post('/timetable')
+async def create_timetable(data: TimetableInput, user=Depends(current_user)):
+    require_staff(user); doc = data.model_dump(); doc['id'] = str(uuid.uuid4()); await db.timetable.insert_one(doc); return doc
+
+@api.get('/assignments')
+async def assignments(user=Depends(current_user)): return await list_collection('assignments')
+
+@api.post('/assignments')
+async def create_assignment(data: AssignmentInput, user=Depends(current_user)):
+    require_staff(user); doc = data.model_dump(); doc.update(id='as-' + uuid.uuid4().hex[:6], status='Not started'); await db.assignments.insert_one(doc); return doc
+
+@api.get('/announcements')
+async def announcements(user=Depends(current_user)): return await list_collection('announcements')
+
+@api.post('/announcements')
+async def create_announcement(data: AnnouncementInput, user=Depends(current_user)):
+    require_staff(user); doc = data.model_dump(); doc.update(id='an-' + uuid.uuid4().hex[:6], author=user['name'], created_at=datetime.now(timezone.utc).isoformat()); await db.announcements.insert_one(doc); return doc
+
+@api.get('/reports')
+async def reports(user=Depends(current_user)):
+    students = await db.students.find({}, {'_id': 0}).to_list(100); rows = await db.attendance.find({}, {'_id': 0}).to_list(1000)
+    return [{'student': s['name'], 'roll_number': s['roll_number'], 'present': len([r for r in rows if r['student_id'] == s['id'] and r['status'] == 'Present']), 'total': len([r for r in rows if r['student_id'] == s['id']])} for s in students]
+
+app.include_router(api)
+origins = os.environ.get('FRONTEND_URL', 'http://localhost:3000').split(',')
+app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=origins, allow_methods=['*'], allow_headers=['*'])
+@app.on_event('shutdown')
+async def shutdown(): client.close()
