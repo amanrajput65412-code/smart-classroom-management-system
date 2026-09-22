@@ -1,0 +1,5 @@
+CORS_ORIGINS="*"
+FRONTEND_URL="https://room-manager-73.preview.emergentagent.com"
+JWT_SECRET="6c1f2d7a8b9e4f3c0a6d1e5b7f2c9a4d8e1f6b3c0d7a2e9f5b8c1d4a7e0f3c6"
+ADMIN_EMAIL="admin@campus.edu"
+ADMIN_PASSWORD="admin123"
